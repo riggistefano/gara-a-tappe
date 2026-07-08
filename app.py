@@ -142,7 +142,7 @@ with tab_input:
 
 # ---------- GRAFICO LIVE ----------
 with tab_chart:
-    st_autorefresh(interval=8000, key="chart_refresh")
+    st_autorefresh(interval=30000, key="chart_refresh")
 
     tappe_df = read_df("Tappe", TAPPE_HEADER)
     arrivi_df = read_df("Arrivi", ARRIVI_HEADER)
