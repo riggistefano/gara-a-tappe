@@ -163,16 +163,20 @@ with tab_input:
 
         if "orario_default" not in st.session_state:
             st.session_state["orario_default"] = now_italy().time()
+        if "orario_key_counter" not in st.session_state:
+            st.session_state["orario_key_counter"] = 0
 
         col_a, col_b = st.columns([3, 1])
         with col_a:
             orario = st.time_input(
-                "Orario", key="orario_input", value=st.session_state["orario_default"]
+                "Orario",
+                key=f"orario_input_{st.session_state['orario_key_counter']}",
+                value=st.session_state["orario_default"],
             )
         with col_b:
             if st.button("🔄 Orario live"):
-                nuovo_orario = now_italy().time()
-                st.session_state["orario_default"] = nuovo_orario
+                st.session_state["orario_default"] = now_italy().time()
+                st.session_state["orario_key_counter"] += 1
                 st.rerun()
 
         if st.button("✅ Registra arrivo", type="primary", width="stretch"):
@@ -243,8 +247,6 @@ with tab_data:
         st.divider()
         st.subheader("🗑️ Cancella registrazioni")
 
-        # Costruisco etichette leggibili mantenendo l'indice originale del DataFrame
-        # (necessario per calcolare la riga corretta nel foglio Google)
         arrivi_df_reset = arrivi_df.reset_index()
         arrivi_df_reset["label"] = arrivi_df_reset.apply(
             lambda r: f"[{r['index']}] {r['pettorale']} - {r['nome']} | {r['tappa']} | {r['timestamp']}",
