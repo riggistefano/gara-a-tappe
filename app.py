@@ -173,7 +173,6 @@ with tab_input:
             if st.button("🔄 Orario live"):
                 nuovo_orario = now_italy().time()
                 st.session_state["orario_default"] = nuovo_orario
-                st.session_state["orario_input"] = nuovo_orario
                 st.rerun()
 
         if st.button("✅ Registra arrivo", type="primary", width="stretch"):
