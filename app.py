@@ -17,6 +17,8 @@ PART_HEADER = ["pettorale", "nome"]
 TAPPE_HEADER = ["ordine", "tappa"]
 ARRIVI_HEADER = ["pettorale", "nome", "tappa", "timestamp"]
 
+CACHE_TTL = 30  # secondi: bilancia freschezza dati e quota API
+
 
 # ---------- CONNESSIONE GOOGLE SHEETS ----------
 @st.cache_resource
@@ -32,8 +34,12 @@ def get_spreadsheet():
     return client.open_by_key(st.secrets["spreadsheet_id"])
 
 
-def get_or_create_worksheet(name, header):
+@st.cache_resource
+def get_worksheet(name, header_tuple):
+    """Cache dell'oggetto worksheet: evita chiamate ripetute a ss.worksheet()
+    (ognuna delle quali fa una fetch_sheet_metadata separata)."""
     ss = get_spreadsheet()
+    header = list(header_tuple)
     try:
         ws = ss.worksheet(name)
     except gspread.WorksheetNotFound:
@@ -42,15 +48,26 @@ def get_or_create_worksheet(name, header):
     return ws
 
 
+def get_or_create_worksheet(name, header):
+    # header passato come tuple per essere hashable e compatibile con cache_resource
+    return get_worksheet(name, tuple(header))
+
+
+@st.cache_data(ttl=CACHE_TTL)
 def read_df(name, header):
     ws = get_or_create_worksheet(name, header)
     data = ws.get_all_records()
     return pd.DataFrame(data) if data else pd.DataFrame(columns=header)
 
 
+def invalidate_cache():
+    read_df.clear()
+
+
 def append_row(name, header, row):
     ws = get_or_create_worksheet(name, header)
     ws.append_row(row)
+    invalidate_cache()
 
 
 def overwrite_sheet(name, header, df):
@@ -59,6 +76,7 @@ def overwrite_sheet(name, header, df):
     ws.append_row(header)
     if not df.empty:
         ws.append_rows(df.astype(str).values.tolist())
+    invalidate_cache()
 
 
 # ---------- INTERFACCIA ----------
@@ -72,7 +90,7 @@ tab_setup, tab_input, tab_chart, tab_data = st.tabs(
 with tab_setup:
     st.subheader("Partecipanti")
     part_df = read_df("Partecipanti", PART_HEADER)
-    st.dataframe(part_df, use_container_width=True)
+    st.dataframe(part_df, width="stretch")
 
     uploaded = st.file_uploader(
         "Carica lista partecipanti (CSV con colonne 'pettorale' e 'nome')", type="csv"
@@ -101,7 +119,7 @@ with tab_setup:
     st.divider()
     st.subheader("Tappe (in ordine)")
     tappe_df = read_df("Tappe", TAPPE_HEADER)
-    st.dataframe(tappe_df, use_container_width=True)
+    st.dataframe(tappe_df, width="stretch")
 
     tappe_input = st.text_area(
         "Elenco tappe in ordine, separate da virgola (es: Partenza, Tappa 1, Tappa 2, Arrivo)"
@@ -130,7 +148,7 @@ with tab_input:
         part_sel = st.selectbox("Partecipante", opzioni)
         orario = st.time_input("Orario", value=datetime.now().time())
 
-        if st.button("✅ Registra arrivo", type="primary", use_container_width=True):
+        if st.button("✅ Registra arrivo", type="primary", width="stretch"):
             pett, nome = part_sel.split(" - ", 1)
             ts = datetime.combine(datetime.now().date(), orario)
             append_row(
@@ -180,9 +198,9 @@ with tab_chart:
         )
         fig.update_xaxes(title="Orario")
         fig.update_layout(height=600, legend_title="Partecipante")
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width="stretch")
 
-        st.caption("Il grafico si aggiorna automaticamente ogni 8 secondi.")
+        st.caption(f"Il grafico si aggiorna automaticamente ogni 60 secondi (dati in cache per {CACHE_TTL}s).")
 
 # ---------- DATI ----------
 with tab_data:
@@ -190,4 +208,4 @@ with tab_data:
     arrivi_df = read_df("Arrivi", ARRIVI_HEADER)
     if not arrivi_df.empty:
         arrivi_df = arrivi_df.sort_values("timestamp", ascending=False)
-    st.dataframe(arrivi_df, use_container_width=True)
+    st.dataframe(arrivi_df, width="stretch")
