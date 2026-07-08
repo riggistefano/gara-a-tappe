@@ -2,7 +2,7 @@ import streamlit as st
 import gspread
 from google.oauth2.service_account import Credentials
 import pandas as pd
-from datetime import datetime
+from datetime import datetime, timedelta
 import plotly.graph_objects as go
 from streamlit_autorefresh import st_autorefresh
 
@@ -36,8 +36,6 @@ def get_spreadsheet():
 
 @st.cache_resource
 def get_worksheet(name, header_tuple):
-    """Cache dell'oggetto worksheet: evita chiamate ripetute a ss.worksheet()
-    (ognuna delle quali fa una fetch_sheet_metadata separata)."""
     ss = get_spreadsheet()
     header = list(header_tuple)
     try:
@@ -49,7 +47,6 @@ def get_worksheet(name, header_tuple):
 
 
 def get_or_create_worksheet(name, header):
-    # header passato come tuple per essere hashable e compatibile con cache_resource
     return get_worksheet(name, tuple(header))
 
 
@@ -77,6 +74,23 @@ def overwrite_sheet(name, header, df):
     if not df.empty:
         ws.append_rows(df.astype(str).values.tolist())
     invalidate_cache()
+
+
+def delete_rows_by_index(name, header, df_indices):
+    """Cancella dal foglio le righe corrispondenti agli indici del DataFrame.
+    df_indices: lista di indici (0-based) relativi al DataFrame letto da read_df.
+    """
+    ws = get_or_create_worksheet(name, header)
+    # +2: +1 per l'header, +1 perché gspread usa righe 1-based
+    sheet_rows = sorted([i + 2 for i in df_indices], reverse=True)
+    for row_num in sheet_rows:
+        ws.delete_rows(row_num)
+    invalidate_cache()
+
+
+def now_italy():
+    """Orario server (UTC su Streamlit Cloud) + 2 ore fisse per l'Italia (CEST)."""
+    return datetime.now() + timedelta(hours=2)
 
 
 # ---------- INTERFACCIA ----------
@@ -146,11 +160,25 @@ with tab_input:
         )
         opzioni = part_df.apply(lambda r: f"{r['pettorale']} - {r['nome']}", axis=1).tolist()
         part_sel = st.selectbox("Partecipante", opzioni)
-        orario = st.time_input("Orario", value=datetime.now().time())
+
+        if "orario_default" not in st.session_state:
+            st.session_state["orario_default"] = now_italy().time()
+
+        col_a, col_b = st.columns([3, 1])
+        with col_a:
+            orario = st.time_input(
+                "Orario", key="orario_input", value=st.session_state["orario_default"]
+            )
+        with col_b:
+            if st.button("🔄 Orario live"):
+                nuovo_orario = now_italy().time()
+                st.session_state["orario_default"] = nuovo_orario
+                st.session_state["orario_input"] = nuovo_orario
+                st.rerun()
 
         if st.button("✅ Registra arrivo", type="primary", width="stretch"):
             pett, nome = part_sel.split(" - ", 1)
-            ts = datetime.combine(datetime.now().date(), orario)
+            ts = datetime.combine(now_italy().date(), orario)
             append_row(
                 "Arrivi",
                 ARRIVI_HEADER,
@@ -206,6 +234,38 @@ with tab_chart:
 with tab_data:
     st.subheader("Tutti gli arrivi registrati")
     arrivi_df = read_df("Arrivi", ARRIVI_HEADER)
-    if not arrivi_df.empty:
-        arrivi_df = arrivi_df.sort_values("timestamp", ascending=False)
-    st.dataframe(arrivi_df, width="stretch")
+
+    if arrivi_df.empty:
+        st.info("Nessun arrivo registrato ancora.")
+    else:
+        arrivi_df_sorted = arrivi_df.sort_values("timestamp", ascending=False)
+        st.dataframe(arrivi_df_sorted, width="stretch")
+
+        st.divider()
+        st.subheader("🗑️ Cancella registrazioni")
+
+        # Costruisco etichette leggibili mantenendo l'indice originale del DataFrame
+        # (necessario per calcolare la riga corretta nel foglio Google)
+        arrivi_df_reset = arrivi_df.reset_index()
+        arrivi_df_reset["label"] = arrivi_df_reset.apply(
+            lambda r: f"[{r['index']}] {r['pettorale']} - {r['nome']} | {r['tappa']} | {r['timestamp']}",
+            axis=1,
+        )
+
+        selezionati = st.multiselect(
+            "Seleziona una o più registrazioni da cancellare",
+            options=arrivi_df_reset["label"].tolist(),
+        )
+
+        if selezionati:
+            st.warning(f"Stai per cancellare {len(selezionati)} registrazione/i. L'operazione è irreversibile.")
+            conferma = st.checkbox("Confermo di voler cancellare le registrazioni selezionate")
+
+            if st.button("❌ Cancella selezionati", type="primary", disabled=not conferma):
+                indici_da_cancellare = arrivi_df_reset[
+                    arrivi_df_reset["label"].isin(selezionati)
+                ]["index"].tolist()
+
+                delete_rows_by_index("Arrivi", ARRIVI_HEADER, indici_da_cancellare)
+                st.success(f"Cancellate {len(indici_da_cancellare)} registrazione/i!")
+                st.rerun()
