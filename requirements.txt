@@ -4,3 +4,4 @@ google-auth
 pandas
 plotly
 streamlit-autorefresh
+pyarrow==17.0.0
